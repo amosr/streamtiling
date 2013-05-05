@@ -1,4 +1,4 @@
-{-# OPTIONS -XTypeFamilies -XRankNTypes -XExistentialQuantification #-}
+{-# OPTIONS -XTypeFamilies -XRankNTypes -XExistentialQuantification -XGADTs #-}
 module Stream where
 import Magic
 import Buffers
@@ -22,14 +22,14 @@ unstream' s
  = unfold $ snd $ mkSuck s
 
 {-# INLINE unfold #-}
-unfold (Sucker s f) = go s
+unfold (Sucker s f) = go SPEC s
  where
   {-# INLINE go #-}
-  go s
+  go SPEC s
    = case f s of
      Done -> []
-     Skip s' -> go s'
-     Yield s' a -> a : go s'
+     Skip s' -> go SPEC s'
+     Yield s' a -> a : go SPEC s'
 
 
 {-# RULES

@@ -1,10 +1,16 @@
-{-# OPTIONS -XExistentialQuantification #-}
+{-# OPTIONS -XExistentialQuantification -XBangPatterns #-}
 module Buffers where
 
 import qualified Data.Vector as V
 import qualified Data.Vector.Mutable as MV
 
 import Control.Monad.ST
+
+import GHC.Exts ( SpecConstrAnnotation(..) )
+
+data SPEC = SPEC | SPEC2
+{-# ANN type SPEC ForceSpecConstr #-}
+
 
 data Sucker a = forall s. Sucker s (s -> Step s a)
 data Step s a = Done | Yield s a | Skip s
@@ -16,13 +22,23 @@ type Buffer a = V.Vector a
 bufferLen = 32
 
 {-# INLINE fillBuffer #-}
-fillBuffer :: s -> (s -> Step s a) -> Buffer a -> ST s2 (Maybe (Buffer a, s))
-fillBuffer s f buf
- = do   buf' <- V.unsafeThaw buf
-        case f s of
-           Done       -> return Nothing
-           Skip  s'   -> goBuffer buf' 0 s' f -- Nothing -- $ go bufferLen     s' []
-           Yield s' a -> goBuffer buf' 1 s' f -- $ Just a -- $ go (bufferLen-1) s' [a]
+fillBuffer :: s -> (s -> Step s a) -> Buffer a -> Maybe (Buffer a, s)
+fillBuffer s f !buf
+ =      case f s of
+           Done       -> Nothing
+           Skip  s'   -> go Nothing  s' -- Nothing -- $ go bufferLen     s' []
+           Yield s' a -> go (Just a) s' -- $ Just a -- $ go (bufferLen-1) s' [a]
+ where
+  go !a s' = Just $ runST $ do
+                !buf' <- V.unsafeThaw buf
+                let i = case a of
+                        Nothing -> 0
+                        Just _  -> 1
+                case a of
+                 Nothing -> return ()
+                 Just !a' -> MV.unsafeWrite buf' 0 a'
+                goBuffer buf' i s' f
+
 
 {-
 {-# INLINE mkBuffer #-}
@@ -37,43 +53,42 @@ mkBuffer s f a = runST $ do
 -}
 
 {-# INLINE goBuffer #-}
-goBuffer m n s f
- = do   (v,s') <- go n s
-        v' <- V.unsafeFreeze v
-        return (Just (v',s'))
+goBuffer !m !n !s !f
+ = do   (len,s') <- go SPEC n s
+        v' <- V.unsafeFreeze (MV.unsafeTake len m)
+        return (v',s')
  where
   {-# INLINE go #-}
-  go n s
+  go SPEC !n !s
    | n >= MV.length m -- should = bufferLen
-   = return (m,s)
-  go n s
+   = return (n,s)
+  go SPEC !n !s
    = case f s of
-     Yield s' a -> MV.unsafeWrite m n a >> go (n+1) s'
-     Skip  s'   ->                         go n     s'
+     Yield s' !a -> MV.unsafeWrite m n a >> go SPEC (n+1) s'
+     Skip  s'   ->                         go SPEC n     s'
      -- NB we are 'allowed' to do a take here because
      -- goBuffer will not be called again
-     Done       -> return (MV.unsafeTake n m, s)
+     Done       -> return (n, s)
      
 {-# INLINE initBuffer #-}
-initBuffer :: ST s2 (Buffer a, Int)
+initBuffer :: ST s2 (Buffer a)
 initBuffer
  = do   v <- MV.new bufferLen
-        v'<- V.unsafeFreeze v
-        return (v', bufferLen+1)
+        V.unsafeFreeze v
 
 {-# INLINE bufferise #-}
 bufferise :: Sucker a -> s -> (Maybe a -> s -> Step s b) -> Sucker b
 bufferise (Sucker s1 f1) s f
- = Sucker (s, Just (s1, runST initBuffer)) next
+ = Sucker (s, Just (s1, (runST initBuffer, bufferLen+1))) next
  where
   {-# INLINE next #-}
   next (s, Just (sB, (v,ix)))
    | ix >= V.length v
-   = case runST $ fillBuffer sB f1 v of
+   = case fillBuffer sB f1 v of
      Nothing        -> Skip (s, Nothing)
      Just (buf, sB')-> Skip (s, Just (sB', (buf,0)))
   next (s, Just (sB, (v,ix) ))
-   = let a   = v V.! ix
+   = let a   = v `V.unsafeIndex` ix
          ix' = ix + 1
      in
      case f (Just a) s of
