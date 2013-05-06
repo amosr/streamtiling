@@ -1,9 +1,7 @@
 {-# OPTIONS -XTypeFamilies #-}
 module Magic where
+import Base
 import Buffers
-
-
--- type NRegisters = 4
 
 
 type Size = Int
@@ -11,28 +9,36 @@ type Size = Int
 max_registers :: Size
 max_registers = 7
 
--- Function from a to b, with hint about required registers
+-- | Function from a to b, with hint about required registers
 data F a b = F (a -> b) Size
 
+-- | STREAM data types.
+-- They take the type of their substreams as type arguments to basically force unrolling
+-- at compile time.
+-- Because the types are finite, structural recursion on them will terminate...
+
+-- | Generator. Finite. Function from index to 'b'
 data Gen b      = Gen (F Int b) Int
+-- | Map a function over another stream
 data Map b  s   = Map (F (TyOf s) b) s
 data Zip s1 s2  = Zip s1 s2
 data Filter s   = Filter (F (TyOf s) Bool) s
---data Concat s a  = (TyOf (TyOf s) ~ a) => Concat s
 data Append s1 s2 = Append s1 s2
 
---data Str sub n where
--- Map :: F a b n -> 
-
+-- | Make an actual stream sucker that can be pulled from
 class STREAM s where
  type TyOf s
+ -- | For some stream, return a 'Sucker' for its elements and the "size" of the sucker.
+ -- The size of any buffered computations is not included in the size.
+ -- Any other stream that uses this sucker can then decide whether it is too large
+ -- and needs buffering, or to compute it inline.
  mkSuck :: s -> (Size, Sucker (TyOf s))
 
 instance STREAM (Gen b) where
  type TyOf   (Gen b)  = b
  {-# INLINE mkSuck #-}
  mkSuck (Gen (F f sz) len)
-  = (sz+1, Sucker 0 go)
+  = (sz, Sucker 0 go)
    where
     {-# INLINE go #-}
     go i = if   i < len
@@ -41,12 +47,11 @@ instance STREAM (Gen b) where
 
 instance (STREAM s) => STREAM (Map b s) where
  type TyOf (Map b s)  = b
--- type SizeOf (Map b n s) = n
  {-# INLINE mkSuck #-}
  mkSuck (Map (F f sz) s)
   = let (sz', suck') = mkSuck s
     in  if sz + sz' > max_registers
-        then (sz+1,   mapBuffer f suck')
+        then (sz,     mapBuffer f suck')
         else (sz+sz', mapInline f suck')
 
 {-# INLINE mapBuffer #-}
@@ -70,13 +75,12 @@ mapInline f (Sucker s2 f2)
 
 instance (STREAM s1, STREAM s2) => STREAM (Zip s1 s2) where
  type TyOf (Zip s1 s2)  = (TyOf s1, TyOf s2)
--- type SizeOf (Zip s1 s2) = SizeOf s1 + SizeOf s2
  {-# INLINE mkSuck #-}
  mkSuck (Zip s1 s2) =
     let (sz1,su1) = mkSuck s1
         (sz2,su2) = mkSuck s2
     in  if   sz1 + sz2 > max_registers
-        then (sz2+1,   bufferZip su1 su2)
+        then (sz2,     bufferZip su1 su2)
         else (sz1+sz2, mkZipper  su1 su2)  -- do both at once        
 
 {-# INLINE mkZipper #-}
@@ -107,20 +111,6 @@ bufferZip sB (Sucker s2 f2)
      Yield s' b -> Yield s' (a,b)
      Skip  s'   -> Skip  s'
 
-{-
-bufferZip (Sucker s1 f1) (Sucker s2 f2)
- = Sucker (s1,s2,initBuffer) f
- where
-  f (s1,s2,[])
-   = case fillBuffer s1 f1 of
-     Nothing  -> Done
-     Just (buf,s1') -> Skip (s1',s2,buf)
-  f (s1,s2, a:as)
-   = case f2 s2 of
-     Done       -> Done
-     Yield s' b -> Yield (s1, s', as) (a,b)
-     Skip  s'   -> Skip  (s1, s', a:as)
--}
 
 instance (STREAM s) => STREAM (Filter s) where
  type TyOf (Filter s) = TyOf s
@@ -128,7 +118,7 @@ instance (STREAM s) => STREAM (Filter s) where
  mkSuck (Filter (F f sz) s)
   = let (sz',su') = mkSuck s
     in  if   (sz+sz') > max_registers
-        then (sz+1,   filterBuffer f su')
+        then (sz,     filterBuffer f su')
         else (sz+sz', filterInline f su')
 
 {-# INLINE filterBuffer #-}
@@ -141,19 +131,6 @@ filterBuffer f suck
    = case f x of
      True  -> Yield s x
      False -> Skip  s
-{-
-filterBuffer f (Sucker s2 f2)
- = Sucker (s2,initBuffer) next
- where
-  next (s,[])
-   = case fillBuffer s f2 of
-     Nothing       -> Done
-     Just (buf,s') -> Skip (s', buf)
-  next (s, a:as)
-   = case f a of
-     True  -> Yield (s,as) a
-     False -> Skip  (s,as)
--}
 
 {-# INLINE filterInline #-}
 filterInline f (Sucker s2 f2)
