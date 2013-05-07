@@ -6,13 +6,14 @@ import Magic
 
 
 import Prelude hiding (map, filter, zip, (++))
+import Data.Vector.Unboxed (Unbox)
 
 -- | Hide the actual implementation type of our Stream
 data Stream a = forall s. (STREAM s, TyOf s ~ a) => Stream s
 
 -- | Convert a list to a Stream: delicate inlining because of rewrite rules
 {-# NOINLINE[0] stream #-}
-stream :: [a] -> Stream a
+stream :: Unbox a => [a] -> Stream a
 stream as = Stream (fromList as)
 
 -- | Convert a Stream to a list: delicate inlining because of rewrite rules
@@ -59,7 +60,7 @@ mkF f = F f f_hint
 -- Requires some putzing around because we need to expose stream/unstream to the rules,
 -- instead of the more obvious implementation.
 {-# INLINE map #-}
-map :: (a -> b) -> [a] -> [b]
+map :: (Unbox a, Unbox b) => (a -> b) -> [a] -> [b]
 map f as = go (stream as)
  where
   {-# INLINE go #-}
@@ -67,7 +68,7 @@ map f as = go (stream as)
    = unstream $ Stream $ Map (mkF f) s
 
 {-# INLINE filter #-}
-filter :: (a -> Bool) -> [a] -> [a]
+filter :: (Unbox a) => (a -> Bool) -> [a] -> [a]
 filter f as = go (stream as)
  where
   {-# INLINE go #-}
@@ -75,7 +76,7 @@ filter f as = go (stream as)
    = unstream $ Stream $ Filter (mkF f) s
 
 {-# INLINE zip #-}
-zip :: [a] -> [b] -> [(a,b)]
+zip :: (Unbox a, Unbox b) => [a] -> [b] -> [(a,b)]
 zip as bs = go (stream as) (stream bs)
  where
   {-# INLINE go #-}
@@ -84,7 +85,7 @@ zip as bs = go (stream as) (stream bs)
    = unstream $ Stream $ Zip sa sb
 
 {-# INLINE (++) #-}
-(++) :: [a] -> [a] -> [a]
+(++) :: (Unbox a) => [a] -> [a] -> [a]
 (++) as bs = go (stream as) (stream bs)
  where
   {-# INLINE go #-}
@@ -93,7 +94,7 @@ zip as bs = go (stream as) (stream bs)
    = unstream $ Stream $ Append sa sb
 
 {-# INLINE gen #-}
-gen :: (Int -> a) -> Int -> [a]
+gen :: (Unbox a) => (Int -> a) -> Int -> [a]
 gen f i = unstream $ Stream $ Gen (mkF f) i
 
 

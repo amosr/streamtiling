@@ -1,13 +1,14 @@
-{-# OPTIONS -XTypeFamilies #-}
+{-# OPTIONS -XTypeFamilies -XFlexibleContexts #-}
 module Magic where
 import Base
 import Buffers
 
+import Data.Vector.Unboxed (Unbox)
 
 type Size = Int
 {-# INLINE max_registers #-}
 max_registers :: Size
-max_registers = 7
+max_registers = 5
 
 -- | Function from a to b, with hint about required registers
 data F a b = F (a -> b) Size
@@ -26,7 +27,7 @@ data Filter s   = Filter (F (TyOf s) Bool) s
 data Append s1 s2 = Append s1 s2
 
 -- | Make an actual stream sucker that can be pulled from
-class STREAM s where
+class Unbox (TyOf s) => STREAM s where
  type TyOf s
  -- | For some stream, return a 'Sucker' for its elements and the "size" of the sucker.
  -- The size of any buffered computations is not included in the size.
@@ -34,7 +35,7 @@ class STREAM s where
  -- and needs buffering, or to compute it inline.
  mkSuck :: s -> (Size, Sucker (TyOf s))
 
-instance STREAM (Gen b) where
+instance Unbox b => STREAM (Gen b) where
  type TyOf   (Gen b)  = b
  {-# INLINE mkSuck #-}
  mkSuck (Gen (F f sz) len)
@@ -45,7 +46,7 @@ instance STREAM (Gen b) where
            then Yield (i+1) (f i)
            else Done
 
-instance (STREAM s) => STREAM (Map b s) where
+instance (STREAM s, Unbox b) => STREAM (Map b s) where
  type TyOf (Map b s)  = b
  {-# INLINE mkSuck #-}
  mkSuck (Map (F f sz) s)
@@ -178,7 +179,7 @@ data FromList a = FromList [a]
 {-# INLINE fromList #-}
 fromList = FromList
 
-instance STREAM (FromList a) where
+instance Unbox a => STREAM (FromList a) where
  type TyOf   (FromList a)  = a
  {-# INLINE mkSuck #-}
  mkSuck (FromList as)

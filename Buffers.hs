@@ -6,8 +6,9 @@ module Buffers where
 
 import Base
 
-import qualified Data.Vector as V
-import qualified Data.Vector.Mutable as MV
+import Data.Vector.Unboxed (Unbox)
+import qualified Data.Vector.Unboxed as V
+import qualified Data.Vector.Unboxed.Mutable as MV
 
 import Control.Monad.ST
 
@@ -23,7 +24,7 @@ bufferLen = 32
 -- if there are fewer than 'bufferLen' elements in the stream.
 -- In that case it is a prefix ('unsafeTake') of buf.
 {-# INLINE fillBuffer #-}
-fillBuffer :: s -> (s -> Step s a) -> Buffer a -> Maybe (Buffer a, s)
+fillBuffer :: Unbox a => s -> (s -> Step s a) -> Buffer a -> Maybe (Buffer a, s)
 fillBuffer s f !buf
  -- Pull once before attempting to fill the buffer: the stream may be finished.
  =      case f s of
@@ -68,7 +69,7 @@ goBuffer !m !n !s !f
 
 
 {-# INLINE initBuffer #-}
-initBuffer :: ST s2 (Buffer a)
+initBuffer :: Unbox a => ST s2 (Buffer a)
 initBuffer
  = do   v <- MV.new bufferLen
         V.unsafeFreeze v
@@ -83,7 +84,7 @@ initBuffer
 -- I expect most stream functions will actually finish as soon as the first stream is finished.
 -- Append would not, but there is little point buffering append.
 {-# INLINE bufferise #-}
-bufferise :: Sucker a -> s -> (Maybe a -> s -> Step s b) -> Sucker b
+bufferise :: Unbox a => Sucker a -> s -> (Maybe a -> s -> Step s b) -> Sucker b
 bufferise (Sucker s1 f1) s f
  -- Start with bufferLen+1 as the index, so the buffer is done.
  = Sucker (s, Just (s1, (runST initBuffer, bufferLen+1))) next
